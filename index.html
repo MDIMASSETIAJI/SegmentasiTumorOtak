@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Brain Tumor Segmentation Viewer</title>
+    <script src="https://cdn.jsdelivr.net/npm/onnxruntime-web/dist/ort.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #0f172a; /* Tema gelap standar aplikasi medis */
+            color: #f1f5f9;
+            margin: 0;
+            padding: 20px;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        h2 { color: #38bdf8; margin-bottom: 5px; font-weight: 600; }
+        p { color: #94a3b8; margin-top: 0; margin-bottom: 20px; }
+        
+        .container {
+            background: #1e293b;
+            padding: 25px;
+            border-radius: 16px;
+            box-shadow: 0 10px 25px rgba(0,0,0,0.3);
+            max-width: 1050px; 
+            width: 100%;
+            text-align: center;
+            border: 1px solid #334155;
+            box-sizing: border-box;
+        }
+        
+        .main-layout {
+            display: flex;
+            flex-direction: row;
+            gap: 25px;
+            margin-top: 20px;
+            text-align: left;
+        }
+        
+        .left-column {
+            flex: 2;
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            min-width: 380px;
+        }
+        
+        .right-column {
+            flex: 3.2;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .control-panel {
+            padding: 20px;
+            border: 2px dashed #475569;
+            border-radius: 12px;
+            background: #1e293b;
+            margin: 0;
+        }
+
+        /* STYLE BARU: Grid Kartu Pratinjau Gambar Sampel */
+        .sample-grid {
+            display: grid;
+            grid-template-columns: repeat(3, 1fr);
+            gap: 12px;
+            margin-top: 15px;
+        }
+        .sample-card {
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            padding: 8px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            opacity: 0.5; /* Redup sebelum model ONNX siap */
+            pointer-events: none; /* Terkunci sebelum model ONNX siap */
+        }
+        .sample-card.enabled {
+            opacity: 1;
+            pointer-events: auto;
+        }
+        .sample-card.enabled:hover {
+            border-color: #38bdf8;
+            transform: translateY(-3px);
+            box-shadow: 0 6px 15px rgba(56, 189, 248, 0.15);
+        }
+        .sample-thumb {
+            width: 100%;
+            height: 75px;
+            object-fit: cover;
+            border-radius: 6px;
+            background: #1e293b;
+            border: 1px solid #1e293b;
+            margin-bottom: 8px;
+        }
+        .sample-label {
+            font-size: 11px;
+            font-weight: 600;
+            color: #94a3b8;
+            word-break: break-all;
+            line-height: 1.3;
+        }
+        .sample-card:hover .sample-label {
+            color: #38bdf8;
+        }
+
+        .btn {
+            background-color: #0284c7;
+            color: white;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.2s;
+        }
+        .btn:hover { background-color: #0369a1; transform: translateY(-1px); }
+        
+        #resultCard {
+            padding: 15px 20px;
+            background: #0f172a;
+            border: 1px solid #334155;
+            border-radius: 10px;
+            display: none; 
+            text-align: left;
+            box-shadow: inset 0 2px 4px rgba(0,0,0,0.2);
+        }
+        .result-title { font-weight: bold; color: #38bdf8; font-size: 15px; margin-bottom: 8px; letter-spacing: 0.5px; }
+        .result-detail { font-size: 14px; color: #cbd5e1; margin: 4px 0; display: flex; justify-content: space-between; }
+        
+        #canvasContainer {
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 12px;
+            border: 1px solid #334155;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            width: 100%;
+            height: 100%;
+            min-height: 380px;
+            box-sizing: border-box;
+        }
+
+        canvas {
+            width: 100%;                
+            max-width: 550px;           
+            height: auto;               
+            border-radius: 8px;
+            box-shadow: 0 6px 16px rgba(0,0,0,0.6);
+    
+    
+        image-rendering: pixelated; 
+        }
+        #status {
+            font-weight: bold;
+            margin: 10px 0;
+            color: #f43f5e;
+        }
+        .legend {
+            display: grid;
+            grid-template-columns: 1fr;
+            gap: 10px;
+            background: #0f172a;
+            padding: 15px;
+            border-radius: 10px;
+            font-size: 14px;
+            border: 1px solid #233147;
+        }
+        .legend-item { display: flex; align-items: center; gap: 10px; }
+        .box { width: 18px; height: 18px; border-radius: 4px; flex-shrink: 0; }
+        input[type="file"] { color: #94a3b8; width: 100%; }
+
+        @media (max-width: 850px) {
+            .main-layout { flex-direction: column; }
+            .left-column, .right-column { width: 100%; min-width: unset; }
+        }
+    </style>
+</head>
+<body>
+
+<div class="container">
+<h2>Brain Tumor MRI Segmentation Using Convolutional Neural Networks (CNN)</h2>
+<div class="sub-title">Sistem Segmentasi MRI Tumor Otak Menggunakan Convolutional Neural Network (CNN)</div>
+    <div id="status">Memuat model ONNX medis, mohon tunggu...</div>
+
+    <div class="main-layout">
+        
+        <div class="left-column">
+            <div class="control-panel">
+                <strong>PILIHAN 1: Input Hasil Scan MRI Anda (.jpg / .png)</strong><br><br>
+                <input type="file" id="fileInput" accept="image/*" disabled><br><br>
+                <hr style="border: 0; border-top: 1px solid #334155; margin: 15px 0;">
+                <strong>PILIHAN 2: Klik Gambar Sampel untuk Diagnosis</strong>
+                
+                <div class="sample-grid">
+                    <div class="sample-card" id="sample1Card">
+                        <img id="thumb1" class="sample-thumb" alt="Glioma">
+                        <span class="sample-label">glioma_sample.jpg</span>
+                    </div>
+                    <div class="sample-card" id="sample2Card">
+                        <img id="thumb2" class="sample-thumb" alt="Meningioma">
+                        <span class="sample-label">meningioma_sample.jpg</span>
+                    </div>
+                    <div class="sample-card" id="sample3Card">
+                        <img id="thumb3" class="sample-thumb" alt="Pituitary">
+                        <span class="sample-label">pituitary_sample.jpg</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="legend">
+                <div class="legend-item"><div class="box" style="background: rgba(255, 0, 0, 0.65);"></div> ID 1: Glioma (Merah)</div>
+                <div class="legend-item"><div class="box" style="background: rgba(255, 165, 0, 0.65);"></div> ID 2: Meningioma (Jingga)</div>
+                <div class="legend-item"><div class="box" style="background: rgba(255, 255, 0, 0.65);"></div> ID 3: Pituitary (Kuning)</div>
+            </div>
+
+            <div id="resultCard"></div>
+        </div>
+        
+        <div class="right-column">
+            <div id="canvasContainer">
+                <canvas id="outputCanvas"></canvas>
+            </div>
+        </div>
+
+    </div>
+</div>
+
+<script>
+    const INPUT_SIZE = 224; 
+    const MODEL_PATH = "resnet_brain_tumor_segmentation.onnx"; 
+    const NUM_CLASSES = 4;  
+    
+    let onnxSession = null;
+    const canvas = document.getElementById('outputCanvas');
+    const ctx = canvas.getContext('2d');
+    const statusDiv = document.getElementById('status');
+    const resultCard = document.getElementById('resultCard');
+
+    // 🌟 ATUR DI SINI: Sesuaikan path/nama file gambar sampel yang ada di folder proyekmu
+    const SAMPLE_IMAGE_1 = "Glioma.jpg"; 
+    const SAMPLE_IMAGE_2 = "Meningioma.jpg"; 
+    const SAMPLE_IMAGE_3 = "Pituitary.jpg";
+
+    async function initModel() {
+        // Tampilkan gambar pratinjau ke dalam komponen thumbnail secara otomatis sejak awal load
+        document.getElementById('thumb1').src = SAMPLE_IMAGE_1;
+        document.getElementById('thumb2').src = SAMPLE_IMAGE_2;
+        document.getElementById('thumb3').src = SAMPLE_IMAGE_3;
+
+        try {
+            onnxSession = await ort.InferenceSession.create(MODEL_PATH);
+            statusDiv.innerText = "Sistem AI Medis Siap Digunakan!";
+            statusDiv.style.color = "#38bdf8";
+            
+            // Buka kunci input file dan aktifkan semua kartu sampel
+            document.getElementById('fileInput').disabled = false;
+            document.getElementById('sample1Card').classList.add('enabled');
+            document.getElementById('sample2Card').classList.add('enabled');
+            document.getElementById('sample3Card').classList.add('enabled');
+        } catch (e) {
+            statusDiv.innerText = "Gagal memuat file ONNX. Jalankan folder ini menggunakan Live Server di VS Code.";
+            console.error(e);
+        }
+    }
+
+    document.getElementById('fileInput').addEventListener('change', (e) => {
+        if (e.target.files.length > 0) {
+            const reader = new FileReader();
+            reader.onload = (event) => processAndPredict(event.target.result);
+            reader.readAsDataURL(e.target.files[0]);
+        }
+    });
+
+    // Event Listener untuk klik pada masing-masing kartu sampel gambar
+    document.getElementById('sample1Card').addEventListener('click', () => processAndPredict(SAMPLE_IMAGE_1));
+    document.getElementById('sample2Card').addEventListener('click', () => processAndPredict(SAMPLE_IMAGE_2));
+    document.getElementById('sample3Card').addEventListener('click', () => processAndPredict(SAMPLE_IMAGE_3));
+
+    function processAndPredict(imageSrc) {
+        const img = new Image();
+        img.crossOrigin = "anonymous";
+        img.src = imageSrc;
+        
+        img.onload = async function() {
+            canvas.width = img.width;
+            canvas.height = img.height;
+            ctx.drawImage(img, 0, 0);
+
+            statusDiv.innerText = "Memetakan koordinat sel tumor via AI...";
+            statusDiv.style.color = "#f43f5e";
+            await runInference(img);
+        };
+    }
+
+    async function runInference(imgElement) {
+        if (!onnxSession) return;
+
+        const tempCanvas = document.createElement('canvas');
+        tempCanvas.width = INPUT_SIZE;
+        tempCanvas.height = INPUT_SIZE;
+        const tempCtx = tempCanvas.getContext('2d');
+        tempCtx.drawImage(imgElement, 0, 0, INPUT_SIZE, INPUT_SIZE);
+
+        const imgData = tempCtx.getImageData(0, 0, INPUT_SIZE, INPUT_SIZE).data;
+        const inputTensorData = new Float32Array(1 * INPUT_SIZE * INPUT_SIZE * 3);
+        let targetIndex = 0;
+
+        for (let i = 0; i < imgData.length; i += 4) {
+            inputTensorData[targetIndex++] = imgData[i];     
+            inputTensorData[targetIndex++] = imgData[i + 1]; 
+            inputTensorData[targetIndex++] = imgData[i + 2]; 
+        }
+
+        const inputName = onnxSession.inputNames[0];
+        const tensorInput = new ort.Tensor('float32', inputTensorData, [1, INPUT_SIZE, INPUT_SIZE, 3]);
+
+        const feeds = {};
+        feeds[inputName] = tensorInput;
+        
+        const outputMap = await onnxSession.run(feeds);
+        const outputName = onnxSession.outputNames[0];
+        const outputTensor = outputMap[outputName];
+        const predMaskData = outputTensor.data; 
+        const dims = outputTensor.dims; 
+
+        const isNCHW = (dims[1] === NUM_CLASSES);
+
+        const maskCanvas = document.createElement('canvas');
+        maskCanvas.width = INPUT_SIZE;
+        maskCanvas.height = INPUT_SIZE;
+        const maskCtx = maskCanvas.getContext('2d');
+        const maskImgData = maskCtx.createImageData(INPUT_SIZE, INPUT_SIZE);
+
+        const stride = INPUT_SIZE * INPUT_SIZE;
+        
+        let classCounts = [0, 0, 0, 0];
+        let classConfSums = [0, 0, 0, 0];
+
+        for (let pixel = 0; pixel < stride; pixel++) {
+            let maxIdx = 0;
+            let maxVal = -Infinity;
+
+            if (isNCHW) {
+                for (let c = 0; c < NUM_CLASSES; c++) {
+                    let val = predMaskData[c * stride + pixel];
+                    if (val > maxVal) {
+                        maxVal = val;
+                        maxIdx = c;
+                    }
+                }
+            } else {
+                for (let c = 0; c < NUM_CLASSES; c++) {
+                    let val = predMaskData[pixel * NUM_CLASSES + c];
+                    if (val > maxVal) {
+                        maxVal = val;
+                        maxIdx = c;
+                    }
+                }
+            }
+
+            classCounts[maxIdx]++;
+            classConfSums[maxIdx] += maxVal;
+
+            const pixelIndex = pixel * 4; 
+
+            if (maxIdx === 1) { 
+                maskImgData.data[pixelIndex] = 255;     
+                maskImgData.data[pixelIndex + 1] = 0;   
+                maskImgData.data[pixelIndex + 2] = 0;   
+                maskImgData.data[pixelIndex + 3] = 160; 
+            } else if (maxIdx === 2) {
+                maskImgData.data[pixelIndex] = 255;     
+                maskImgData.data[pixelIndex + 1] = 165; 
+                maskImgData.data[pixelIndex + 2] = 0;   
+                maskImgData.data[pixelIndex + 3] = 160; 
+            } else if (maxIdx === 3) {
+                maskImgData.data[pixelIndex] = 255;     
+                maskImgData.data[pixelIndex + 1] = 255; 
+                maskImgData.data[pixelIndex + 2] = 0;   
+                maskImgData.data[pixelIndex + 3] = 160; 
+            } else {
+                maskImgData.data[pixelIndex + 3] = 0;   
+            }
+        }
+
+        const classLabels = ["Menigioma-glioma-pituitary", "Glioma", "Meningioma", "Pituitary"];
+        let dominantTumorClass = 0;
+        let maxTumorPixels = 0;
+
+        for (let c = 1; c < NUM_CLASSES; c++) {
+            if (classCounts[c] > maxTumorPixels) {
+                maxTumorPixels = classCounts[c];
+                dominantTumorClass = c;
+            }
+        }
+
+        let finalDiagnosis = "";
+        let finalConfidence = 0;
+        let badgeColor = "";
+
+        if (maxTumorPixels > 10) { 
+            finalDiagnosis = classLabels[dominantTumorClass];
+            finalConfidence = (classConfSums[dominantTumorClass] / classCounts[dominantTumorClass]) * 100;
+            badgeColor = "#f43f5e"; 
+        } else {
+            finalDiagnosis = classLabels[0] + " (Normal Tissue / BG)";
+            finalConfidence = (classConfSums[0] / classCounts[0]) * 100;
+            badgeColor = "#10b981"; 
+        }
+
+        if (finalConfidence > 100) finalConfidence = 100;
+        if (finalConfidence < 0) finalConfidence = 0;
+
+        resultCard.style.display = "block";
+        resultCard.innerHTML = `
+            <div class="result-title">ANALISIS OUTPUT KLINIS MODEL:</div>
+            <div class="result-detail">Hasil Diagnosis: <span style="color: ${badgeColor}; font-weight: bold;">${finalDiagnosis.toUpperCase()}</span></div>
+            <div class="result-detail">Tingkat Keyakinan (Confidence): <span style="color: #38bdf8; font-weight: bold;">${finalConfidence.toFixed(2)}%</span></div>
+            <div class="result-detail">Proporsi Luas Lesi/Tumor: <span style="color: #cbd5e1;">${((maxTumorPixels / stride) * 100).toFixed(2)}% dari area gambar</span></div>
+        `;
+
+        maskCtx.putImageData(maskImgData, 0, 0);
+        ctx.drawImage(maskCanvas, 0, 0, canvas.width, canvas.height);
+
+        statusDiv.innerText = `Pemetaan Medis Selesai: Area tumor berhasil diisolasi!`;
+        statusDiv.style.color = "#10b981";
+    }
+
+    window.onload = initModel;
+</script>
+
+</body>
+</html>
